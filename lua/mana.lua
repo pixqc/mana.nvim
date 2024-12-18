@@ -266,19 +266,27 @@ local function command_set(cfgs, bufnr, winid)
 				winid = window_create(bufnr)
 				buffer_cursor_down(bufnr)
 			end
+		elseif cmd == "paste" then
+			local start_pos = vim.fn.getpos("'<")
+			local end_pos = vim.fn.getpos("'>")
+			local start_line = start_pos[2]
+			local end_line = end_pos[2]
+
+			local current_buf = vim.api.nvim_get_current_buf()
+			local lines = vim.api.nvim_buf_get_lines(current_buf, start_line - 1, end_line, false)
+			local text = table.concat(lines, "\n")
+			buffer_append(bufnr, text)
 		elseif cmd == "switch" then
 			local model = args[2]
 			if not model then
 				vim.notify("Please specify a model name", vim.log.levels.ERROR)
 				return
 			end
-
 			local cfg = cfgs[model]
 			if not cfg then
 				vim.notify("Invalid model name: " .. model, vim.log.levels.ERROR)
 				return
 			end
-
 			keymap_set_chat(cfg, bufnr)
 			vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
 				string.format("model: %s", cfg.name),
@@ -286,8 +294,9 @@ local function command_set(cfgs, bufnr, winid)
 		end
 	end, {
 		nargs = 1,
+		range = true,
 		complete = function()
-			return { "open", "close", "toggle", "switch" }
+			return { "open", "close", "toggle", "paste", "switch" }
 		end,
 	})
 end
