@@ -1,6 +1,7 @@
 local Job = require("plenary.job")
 local M = {}
 
+---@alias Mana.Model "gemini" | "sonnet"
 ---@class Mana.ModelConfig
 ---@field url string
 ---@field name string
@@ -11,7 +12,7 @@ local M = {}
 
 ---@class Mana.BufferState
 ---@field winid integer|nil @ nvim window ID
----@field bufnr integer|nil @ nvim buffer number
+---@field bufnr integer @ nvim buffer number
 
 ---@alias Mana.Role "user" | "assistant" | "system"
 ---@class Mana.Messages
@@ -19,6 +20,7 @@ local M = {}
 
 -- // WINDOW+BUFFER stuffs --
 
+-- move cursor down to "textbox"
 ---@param bufnr integer
 ---@return nil
 local function buffer_cursor_down(bufnr)
@@ -27,6 +29,7 @@ local function buffer_cursor_down(bufnr)
 	vim.api.nvim_command("startinsert")
 end
 
+---gets existing buffer, if not exist create new one
 ---@param prepend string
 ---@return integer @ bufnr
 local function buffer_get(prepend)
@@ -42,14 +45,39 @@ local function buffer_get(prepend)
 	local name = string.format("%s/mana", vim.fn.getcwd())
 	vim.api.nvim_buf_set_name(bufnr, name)
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(prepend, "\n"))
+	vim.api.nvim_buf_set_name(bufnr, "mana")
+	vim.api.nvim_set_option_value("syntax", "markdown", { buf = bufnr })
+	vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = bufnr }))
 	return bufnr -- create new buffer, return bufnr
+end
+
+---@param bufnr integer
+---@return nil
+local function buffer_clear(bufnr)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local new_lines = {}
+	for i = 1, math.min(3, #lines) do
+		table.insert(new_lines, lines[i])
+	end
+	table.insert(new_lines, "")
+	table.insert(new_lines, "") -- append \n\n
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
+	buffer_cursor_down(bufnr)
+end
+
+---@param bufnr integer
+---@param chunk string
+---@return nil
+local function buffer_append(bufnr, chunk)
+	local last_line = vim.api.nvim_buf_get_lines(bufnr, -2, -1, false)[1] or ""
+	local lines = vim.split(last_line .. chunk, "\n", { plain = true })
+	vim.api.nvim_buf_set_lines(bufnr, -2, -1, false, lines)
 end
 
 ---@param bufnr integer
 ---@return integer winid
 local function window_create(bufnr)
 	vim.cmd("botright vsplit")
-
 	local winid = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(winid, bufnr)
 	vim.api.nvim_win_set_width(winid, math.floor(vim.o.columns * 0.35))
@@ -58,46 +86,10 @@ local function window_create(bufnr)
 	vim.api.nvim_set_option_value("winfixwidth", true, { win = winid })
 	vim.api.nvim_set_option_value("wrap", true, { win = winid })
 	vim.api.nvim_set_option_value("linebreak", true, { win = winid })
-	vim.api.nvim_buf_set_name(bufnr, "mana")
-
-	vim.api.nvim_set_option_value("syntax", "markdown", { buf = bufnr })
-	vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = bufnr }))
-	buffer_cursor_down(bufnr)
-
 	return winid
 end
---
--- ---@param bufnr integer
--- ---@return Mana.Messages
--- local function buffer_parse(bufnr)
--- 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
--- 	local messages = {}
--- 	local current_role = nil
--- 	local current_content = {}
---
--- 	local function append_message()
--- 		if current_role then
--- 			local message = { role = current_role, content = vim.trim(table.concat(current_content, "\n")) }
--- 			table.insert(messages, message)
--- 			current_content = {}
--- 		end
--- 	end
---
--- 	for _, line in ipairs(lines) do
--- 		if line:match("^<user>%s*$") then
--- 			append_message()
--- 			current_role = "user"
--- 		elseif line:match("^<assistant>%s*$") then
--- 			append_message()
--- 			current_role = "assistant"
--- 		elseif current_role then
--- 			table.insert(current_content, line)
--- 		end
--- 	end
--- 	append_message()
--- 	return messages
--- end
 
+---take raw string in buffer, format to messages to be sent to API
 ---@param bufnr integer
 ---@return Mana.Messages
 local function buffer_parse(bufnr)
@@ -147,84 +139,31 @@ local function buffer_parse(bufnr)
 	return messages
 end
 
----@param bufnr integer
----@return nil
-local function buffer_clear(bufnr)
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local new_lines = {}
-	for i = 1, math.min(3, #lines) do
-		table.insert(new_lines, lines[i])
-	end
-	table.insert(new_lines, "")
-	table.insert(new_lines, "") -- append \n\n
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
-	buffer_cursor_down(bufnr)
-end
-
----@param bufnr integer
----@param winid integer|nil @ winid can be deleted here
----@return nil
-local function command_set(bufnr, winid)
-	vim.api.nvim_create_user_command("Mana", function(opts)
-		if opts.args == "open" then
-			if not (winid and vim.api.nvim_win_is_valid(winid)) then
-				winid = window_create(bufnr)
-			end
-		elseif opts.args == "close" then
-			if winid and vim.api.nvim_win_is_valid(winid) then
-				vim.api.nvim_win_close(winid, true)
-				winid = nil
-			end
-		elseif opts.args == "toggle" then
-			if winid and vim.api.nvim_win_is_valid(winid) then
-				vim.api.nvim_win_close(winid, true)
-				winid = nil
-			else
-				winid = window_create(bufnr)
-			end
-		end
-	end, {
-		nargs = 1,
-		complete = function()
-			return { "open", "close", "toggle" }
-		end,
-	})
-end
-
----@param bufnr integer
----@param chunk string
----@return nil
-local function buffer_append(bufnr, chunk)
-	vim.schedule(function()
-		local last_line = vim.api.nvim_buf_get_lines(bufnr, -2, -1, false)[1] or ""
-		local lines = vim.split(last_line .. chunk, "\n", { plain = true })
-		vim.api.nvim_buf_set_lines(bufnr, -2, -1, false, lines)
-	end)
-end
-
----@param data string
----@return string
-local function parse_stream(data)
-	for line in data:gmatch("[^\r\n]+") do
-		if line:match("^data: ") then
-			local json_str = line:sub(7)
-			local ok, decoded = pcall(vim.json.decode, json_str)
-			if ok and decoded and decoded.choices then
-				for _, choice in ipairs(decoded.choices) do
-					if choice.delta and choice.delta.content then
-						return choice.delta.content
-					end
-				end
-			end
-		end
-	end
-	return ""
-end
+-- // FETCH+COMMAND+KEYMAP stuffs --
 
 ---@param cfg Mana.ModelConfig
 ---@param messages Mana.Messages
 ---@return nil
 local function chat(cfg, messages, bufnr)
+	---@param data string
+	---@return string
+	local function parse_stream(data)
+		for line in data:gmatch("[^\r\n]+") do
+			if line:match("^data: ") then
+				local json_str = line:sub(7)
+				local ok, decoded = pcall(vim.json.decode, json_str)
+				if ok and decoded and decoded.choices then
+					for _, choice in ipairs(decoded.choices) do
+						if choice.delta and choice.delta.content then
+							return choice.delta.content
+						end
+					end
+				end
+			end
+		end
+		return ""
+	end
+
 	buffer_append(bufnr, "\n\n<assistant>\n\n")
 	local request_body = {
 		model = cfg.name,
@@ -248,9 +187,9 @@ local function chat(cfg, messages, bufnr)
 		},
 		on_stdout = function(_, data)
 			local chunk = parse_stream(data)
-			if chunk ~= "" and bufnr then
+			vim.schedule(function()
 				buffer_append(bufnr, chunk)
-			end
+			end)
 
 			if data:match("data: %[DONE%]") then
 				vim.schedule(function()
@@ -259,19 +198,25 @@ local function chat(cfg, messages, bufnr)
 			end
 		end,
 		on_stderr = function(_, data)
-			buffer_append(bufnr, data)
+			vim.schedule(function()
+				buffer_append(bufnr, data)
+			end)
 		end,
 	}):start()
 end
 
+---set keymap to chat, also set which model to use
 ---@param cfg Mana.ModelConfig
 ---@param bufnr integer
 ---@return nil
-local function keymap_set(cfg, bufnr)
-	-- send chat
+local function keymap_set_chat(cfg, bufnr)
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<CR>", "", {
 		callback = function()
 			local messages = buffer_parse(bufnr)
+			if #messages == 1 and messages[1].content == "" then
+				print("emtpy input")
+				return -- no user input, do nothing
+			end
 			if messages then
 				chat(cfg, messages, bufnr)
 			end
@@ -279,7 +224,11 @@ local function keymap_set(cfg, bufnr)
 		noremap = true,
 		silent = true,
 	})
+end
 
+---@param bufnr integer
+---@return nil
+local function keymap_set(bufnr)
 	-- clear chat
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<C-n>", "", {
 		callback = function()
@@ -290,9 +239,62 @@ local function keymap_set(cfg, bufnr)
 	})
 end
 
+---@param cfgs table<Mana.Model, Mana.ModelConfig>
+---@param bufnr integer
+---@param winid integer|nil @ winid can be deleted here
+---@return nil
+local function command_set(cfgs, bufnr, winid)
+	vim.api.nvim_create_user_command("Mana", function(opts)
+		local args = vim.split(opts.args, "%s+")
+		local cmd = args[1]
+
+		if cmd == "open" then
+			if not (winid and vim.api.nvim_win_is_valid(winid)) then
+				winid = window_create(bufnr)
+				buffer_cursor_down(bufnr)
+			end
+		elseif cmd == "close" then
+			if winid and vim.api.nvim_win_is_valid(winid) then
+				vim.api.nvim_win_close(winid, true)
+				winid = nil
+			end
+		elseif cmd == "toggle" then
+			if winid and vim.api.nvim_win_is_valid(winid) then
+				vim.api.nvim_win_close(winid, true)
+				winid = nil
+			else
+				winid = window_create(bufnr)
+				buffer_cursor_down(bufnr)
+			end
+		elseif cmd == "switch" then
+			local model = args[2]
+			if not model then
+				vim.notify("Please specify a model name", vim.log.levels.ERROR)
+				return
+			end
+
+			local cfg = cfgs[model]
+			if not cfg then
+				vim.notify("Invalid model name: " .. model, vim.log.levels.ERROR)
+				return
+			end
+
+			keymap_set_chat(cfg, bufnr)
+			vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
+				string.format("model: %s", cfg.name),
+			})
+		end
+	end, {
+		nargs = 1,
+		complete = function()
+			return { "open", "close", "toggle", "switch" }
+		end,
+	})
+end
+
 function M.setup()
-	local models_ = {
-		{
+	local cfgs_ = {
+		gemini = {
 			url = "https://generativelanguage.googleapis.com/v1beta/chat/completions",
 			name = "gemini-2.0-flash-exp",
 			system_prompt = "be brief, get to the point",
@@ -300,7 +302,7 @@ function M.setup()
 			top_p = 0.9,
 			api_key = os.getenv("GOOGLE_AISTUDIO_API_KEY"),
 		},
-		{
+		sonnet = {
 			url = "https://openrouter.ai/api/v1/chat/completions",
 			name = "anthropic/claude-3.5-sonnet:beta",
 			system_prompt = "",
@@ -310,27 +312,30 @@ function M.setup()
 		},
 	}
 
-	---@type Mana.ModelConfig[]
-	local models = vim.tbl_filter(function(cfg)
-		return cfg.api_key ~= nil
-	end, models_)
+	---@type table<Mana.Model, Mana.ModelConfig>
+	local cfgs = {}
+	for name, cfg in pairs(cfgs_) do
+		if cfg.api_key ~= nil then
+			cfgs[name] = cfg
+		end
+	end
 
-	if #models == 0 then
+	if vim.tbl_count(cfgs) == 0 then
 		vim.notify("No models available. Please set up API keys.", vim.log.levels.ERROR)
 		return
 	end
 
-	local default_model = models[1]
-	local prepend = string.format("model: %s\n\n<user>\n\n", default_model.name)
-
+	local cfg = cfgs["gemini"] -- default model
+	local prepend = string.format("model: %s\n\n<user>\n\n", cfg.name)
+	--
 	---@type Mana.BufferState
 	local buffer_state = {
 		bufnr = buffer_get(prepend),
 		winid = nil,
 	}
-
-	command_set(buffer_state.bufnr, buffer_state.winid)
-	keymap_set(default_model, buffer_state.bufnr)
+	command_set(cfgs, buffer_state.bufnr, buffer_state.winid)
+	keymap_set(buffer_state.bufnr)
+	keymap_set_chat(cfg, buffer_state.bufnr)
 end
 
 return M
