@@ -86,6 +86,16 @@ local function window_create(bufnr)
 	vim.api.nvim_set_option_value("winfixwidth", true, { win = winid })
 	vim.api.nvim_set_option_value("wrap", true, { win = winid })
 	vim.api.nvim_set_option_value("linebreak", true, { win = winid })
+
+	vim.api.nvim_create_autocmd("WinResized", {
+		callback = function()
+			if vim.api.nvim_win_is_valid(winid) then
+				local width = math.floor(vim.o.columns * 0.35)
+				vim.api.nvim_win_set_width(winid, width)
+			end
+		end,
+	})
+
 	return winid
 end
 
@@ -237,6 +247,15 @@ local function keymap_set(bufnr)
 		noremap = true,
 		silent = true,
 	})
+
+	-- clear chat (insert mode)
+	vim.api.nvim_buf_set_keymap(bufnr, "i", "<C-n>", "", {
+		callback = function()
+			buffer_clear(bufnr)
+		end,
+		noremap = true,
+		silent = true,
+	})
 end
 
 ---@param cfgs table<Mana.Model, Mana.ModelConfig>
@@ -275,7 +294,7 @@ local function command_set(cfgs, bufnr, winid)
 			local current_buf = vim.api.nvim_get_current_buf()
 			local lines = vim.api.nvim_buf_get_lines(current_buf, start_line - 1, end_line, false)
 			local text = table.concat(lines, "\n")
-			buffer_append(bufnr, text)
+			buffer_append(bufnr, "\n" .. text .. "\n\n")
 		elseif cmd == "switch" then
 			local model = args[2]
 			if not model then
