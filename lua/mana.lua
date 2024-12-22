@@ -16,6 +16,8 @@ local M = {}
 
 ---@alias Mana2.Role "user" | "assistant" | "system"
 ---@alias Mana2.Messages { role: Mana2.Role, content:  { type: "text", text: string }[] }[]
+---@alias Mana2.Prefetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
+---@alias Mana2.Fetcher fun(messages: Mana2.Messages)
 
 -- // WINDOW+BUFFER STUFFS --
 
@@ -34,7 +36,7 @@ local function buffer_get()
 	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_get_name(buf):match("mana$") then
 			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-			return buf -- existing buffer
+			return buf -- existing bufnr
 		end
 	end
 
@@ -122,6 +124,7 @@ local function window_create(bufnr)
 	vim.api.nvim_set_option_value("wrap", true, { win = winid })
 	vim.api.nvim_set_option_value("linebreak", true, { win = winid })
 
+	-- keep window size static
 	vim.api.nvim_create_autocmd("WinResized", {
 		callback = function()
 			if vim.api.nvim_win_is_valid(winid) then
@@ -179,8 +182,8 @@ end
 ---@param model_cfgs Mana2.ModelConfig
 ---@param endpoint_cfgs Mana2.EndpointConfig
 ---@param bufnr integer
----@param pre_fetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
-local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetcher)
+---@param prefetcher Mana2.Prefetcher
+local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
 	local models = {}
 	for name, cfg in pairs(model_cfgs) do
 		table.insert(models, {
@@ -191,7 +194,7 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetc
 
 	pickers
 		.new({}, {
-			prompt_title = "Switch Model",
+			prompt_title = "Mana switch model",
 			finder = finders.new_table({
 				results = models,
 				entry_maker = function(entry)
@@ -207,12 +210,11 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetc
 				actions.select_default:replace(function()
 					actions.close(prompt_bufnr)
 					local selection = action_state.get_selected_entry()
-					vim.notify(vim.inspect(selection))
 					---@type Mana2.Model
 					local model = selection.value.name
 					local model_cfg = model_cfgs[model]
 					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
-					local fetcher = pre_fetcher(model_cfg.name, endpoint_cfg)
+					local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
 					keymap_set_chat(bufnr, fetcher)
 					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
 						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
@@ -224,23 +226,14 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetc
 		:find()
 end
 
----@param bufnr integer
----@param model_cfgs Mana2.ModelConfig
----@param endpoint_cfgs Mana2.EndpointConfig
----@param pre_fetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
-local function command_set_chat(bufnr, model_cfgs, endpoint_cfgs, pre_fetcher)
-	vim.api.nvim_create_user_command("ManaSwitch", function(_)
-		telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetcher)
-	end, {
-		nargs = 0,
-		range = false,
-	})
-end
-
+---mk_prefetcher(callbacks)(configs)(messages)
+---callbacks are same no matter the model
+---pass mk_prefetcher(callbacks) to "model switcher" (it's a "prefetcher")
+---pass messages to mk_prefetcher(callbacks)(configs) to chat with model
 ---@param stdout_callback function
 ---@param stderr_callback function
----@return fun(model_name: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
-local function fetch(stdout_callback, stderr_callback)
+---@return Mana2.Prefetcher
+local function mk_prefetcher(stdout_callback, stderr_callback)
 	return function(model_name, endpoint_cfg)
 		return function(messages)
 			local request_body = {
@@ -296,8 +289,10 @@ end
 
 ---@param bufnr integer
 ---@param winid integer|nil
----@return nil
-local function command_set_ui(bufnr, winid)
+---@param model_cfgs Mana2.ModelConfig
+---@param endpoint_cfgs Mana2.EndpointConfig
+---@param prefetcher Mana2.Prefetcher
+local function command_set(bufnr, winid, model_cfgs, endpoint_cfgs, prefetcher)
 	vim.api.nvim_create_user_command("Mana", function(opts)
 		local args = vim.split(opts.args, "%s+")
 		local cmd = args[1]
@@ -322,6 +317,8 @@ local function command_set_ui(bufnr, winid)
 			end
 		elseif cmd == "clear" then
 			buffer_clear(bufnr)
+		elseif cmd == "switch" then
+			telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
 		elseif cmd == "paste" then
 			local start_pos = vim.fn.getpos("'<")
 			local end_pos = vim.fn.getpos("'>")
@@ -336,7 +333,7 @@ local function command_set_ui(bufnr, winid)
 		nargs = 1,
 		range = true,
 		complete = function()
-			return { "open", "close", "toggle", "paste" }
+			return { "open", "close", "toggle", "switch", "paste" }
 		end,
 	})
 end
@@ -445,8 +442,8 @@ M.setup = function(opts)
 	end
 
 	---@type Mana2.ModelConfig_|nil, string?
-	local default_model_cfg, dm_err = parse_opts_default_model(opts.default_model, model_cfgs)
-	if not default_model_cfg then
+	local default, dm_err = parse_opts_default_model(opts.default_model, model_cfgs)
+	if not default then
 		vim.notify("Mana.nvim error: " .. dm_err, vim.log.levels.ERROR)
 		return
 	end
@@ -475,26 +472,16 @@ M.setup = function(opts)
 		end)
 	end
 
-	local pre_fetcher = fetch(stdout_callback, stderr_callback)
-	local fetcher = pre_fetcher(default_model_cfg.name, endpoint_cfgs[default_model_cfg.endpoint])
+	local prefetcher = mk_prefetcher(stdout_callback, stderr_callback)
+	local fetcher = prefetcher(default.name, endpoint_cfgs[default.endpoint])
 
-	local default_model_str = string.format("model: %s@%s", default_model_cfg.endpoint, default_model_cfg.name)
-	local prepend = string.format("%s\n\n<user>\n\n", default_model_str)
+	local prepend_ = string.format("model: %s@%s", default.endpoint, default.name)
+	local prepend = string.format("%s\n\n<user>\n\n", prepend_)
 	vim.api.nvim_buf_set_lines(buffer_state.bufnr, 0, -1, false, vim.split(prepend, "\n"))
 
 	keymap_set_ui(buffer_state.bufnr)
-	command_set_ui(buffer_state.bufnr, buffer_state.winid)
 	keymap_set_chat(buffer_state.bufnr, fetcher)
-	command_set_chat(buffer_state.bufnr, model_cfgs, endpoint_cfgs, pre_fetcher)
+	command_set(buffer_state.bufnr, buffer_state.winid, model_cfgs, endpoint_cfgs, prefetcher)
 end
 
 return M
-
--- -- maybe fetchers shouldn't be a separate thing
--- -- but maybe.. model_cfg.fetcher,
--- -- certain invariants holds so i technically can do this sort of thing
--- local fetchers = {}
--- for model, model_cfg in pairs(model_cfgs) do
--- 	local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
--- 	fetchers[model] = fetch(model_cfg, endpoint_cfg, buffer_state.bufnr)
--- end
