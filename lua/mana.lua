@@ -1,3 +1,8 @@
+local pickers = require("telescope.pickers")
+local finders = require("telescope.finders")
+local conf = require("telescope.config").values
+local actions = require("telescope.actions")
+local action_state = require("telescope.actions.state")
 local Job = require("plenary.job")
 local M = {}
 
@@ -8,6 +13,9 @@ local M = {}
 ---@alias Mana2.ModelConfig_ {endpoint: Mana2.Endpoint, name:string, system_prompt: string, temperature: number, top_p: number}
 ---@alias Mana2.ModelConfig table<Mana2.Model, Mana2.ModelConfig_>
 ---@alias Mana2.BufferState {winid: integer|nil, bufnr: integer}
+
+---@alias Mana2.Role "user" | "assistant" | "system"
+---@alias Mana2.Messages { role: Mana2.Role, content:  { type: "text", text: string }[] }[]
 
 -- // WINDOW+BUFFER STUFFS --
 
@@ -64,8 +72,42 @@ local function buffer_append(bufnr, chunk)
 end
 
 ---@param bufnr integer
----@return nil -- should return message with img-enabled
-local function buffer_parse(bufnr) end
+---@return Mana2.Messages
+local function buffer_parse(bufnr)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local messages = {}
+	local current_role = nil
+	local current_text = {}
+
+	local function add_message()
+		if current_role and #current_text > 0 then
+			local combined_text = table.concat(current_text, "\n")
+			table.insert(messages, {
+				role = current_role,
+				content = {
+					{ type = "text", text = combined_text },
+				},
+			})
+		end
+	end
+
+	for _, line in ipairs(lines) do
+		if line == "<user>" then
+			add_message()
+			current_role = "user"
+			current_text = {}
+		elseif line == "<assistant>" then
+			add_message()
+			current_role = "assistant"
+			current_text = {}
+		elseif current_role and vim.trim(line) ~= "" then
+			table.insert(current_text, vim.trim(line))
+		end
+	end
+
+	add_message() -- add the last message
+	return messages
+end
 
 ---@param bufnr integer
 ---@return integer winid
@@ -113,51 +155,8 @@ local function stream_parse(data)
 	return ""
 end
 
-local function fetch(model_cfg, endpoint_cfg, bufnr)
-	return function(messages)
-		local request_body = {
-			model = model_cfg.name,
-			messages = messages,
-			stream = true,
-		}
-
-		---@diagnostic disable: missing-fields
-		Job:new({
-			command = "curl",
-			args = {
-				"-s",
-				endpoint_cfg.url,
-				"-H",
-				"Content-Type: application/json",
-				"-H",
-				"Authorization: Bearer " .. endpoint_cfg.api_key,
-				"--no-buffer",
-				"-d",
-				vim.json.encode(request_body),
-			},
-			on_stdout = function(_, data)
-				local chunk = stream_parse(data)
-				vim.schedule(function()
-					buffer_append(bufnr, chunk)
-				end)
-
-				if data:match("data: %[DONE%]") then
-					vim.schedule(function()
-						buffer_append(bufnr, "\n<user>\n")
-					end)
-				end
-			end,
-			on_stderr = function(_, data)
-				vim.schedule(function()
-					buffer_append(bufnr, data)
-				end)
-			end,
-		}):start()
-	end
-end
-
 ---@param bufnr integer
----@param fetcher function
+---@param fetcher fun(messages: Mana2.Messages)
 ---@return nil
 local function keymap_set_chat(bufnr, fetcher)
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<CR>", "", {
@@ -177,37 +176,98 @@ local function keymap_set_chat(bufnr, fetcher)
 	})
 end
 
+---@param model_cfgs Mana2.ModelConfig
+---@param endpoint_cfgs Mana2.EndpointConfig
+---@param bufnr integer
+---@param pre_fetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
+local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetcher)
+	local models = {}
+	for name, cfg in pairs(model_cfgs) do
+		table.insert(models, {
+			name = name,
+			display = string.format("%s@%s", cfg.endpoint, cfg.name),
+		})
+	end
+
+	pickers
+		.new({}, {
+			prompt_title = "Switch Model",
+			finder = finders.new_table({
+				results = models,
+				entry_maker = function(entry)
+					return {
+						value = entry,
+						display = entry.display,
+						ordinal = entry.display,
+					}
+				end,
+			}),
+			sorter = conf.generic_sorter({}),
+			attach_mappings = function(prompt_bufnr, _)
+				actions.select_default:replace(function()
+					actions.close(prompt_bufnr)
+					local selection = action_state.get_selected_entry()
+					vim.notify(vim.inspect(selection))
+					---@type Mana2.Model
+					local model = selection.value.name
+					local model_cfg = model_cfgs[model]
+					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
+					local fetcher = pre_fetcher(model_cfg.name, endpoint_cfg)
+					keymap_set_chat(bufnr, fetcher)
+					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
+						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
+					})
+				end)
+				return true
+			end,
+		})
+		:find()
+end
+
 ---@param bufnr integer
 ---@param model_cfgs Mana2.ModelConfig
----@param fetchers function[]
----@return nil
-local function command_set_chat(bufnr, model_cfgs, fetchers)
-	vim.api.nvim_create_user_command("Mana", function(opts)
-		local args = vim.split(opts.args, "%s+")
-		local cmd = args[1]
-		if cmd == "switch" then
-			local model = args[2]
-			if not model then
-				vim.notify("Please specify a model name", vim.log.levels.ERROR)
-				return
-			end
-			local cfg = model_cfgs[model]
-			if not cfg then
-				vim.notify("Invalid model name: " .. model, vim.log.levels.ERROR)
-				return
-			end
-			keymap_set_chat(fetchers[model], bufnr)
-			vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
-				string.format("model: %s", cfg.name),
-			})
-		end
+---@param endpoint_cfgs Mana2.EndpointConfig
+---@param pre_fetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
+local function command_set_chat(bufnr, model_cfgs, endpoint_cfgs, pre_fetcher)
+	vim.api.nvim_create_user_command("ManaSwitch", function(_)
+		telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, pre_fetcher)
 	end, {
-		nargs = 1,
-		range = true,
-		complete = function()
-			return { "switch" }
-		end,
+		nargs = 0,
+		range = false,
 	})
+end
+
+---@param stdout_callback function
+---@param stderr_callback function
+---@return fun(model_name: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
+local function fetch(stdout_callback, stderr_callback)
+	return function(model_name, endpoint_cfg)
+		return function(messages)
+			local request_body = {
+				model = model_name,
+				messages = messages,
+				stream = true,
+			}
+
+			---@diagnostic disable: missing-fields
+			Job:new({
+				command = "curl",
+				args = {
+					"-s",
+					endpoint_cfg.url,
+					"-H",
+					"Content-Type: application/json",
+					"-H",
+					"Authorization: Bearer " .. endpoint_cfg.api_key,
+					"--no-buffer",
+					"-d",
+					vim.json.encode(request_body),
+				},
+				on_stdout = stdout_callback,
+				on_stderr = stderr_callback,
+			}):start()
+		end
+	end
 end
 
 -- // UI STUFFS --
@@ -260,12 +320,13 @@ local function command_set_ui(bufnr, winid)
 				winid = window_create(bufnr)
 				buffer_cursor_down(bufnr)
 			end
+		elseif cmd == "clear" then
+			buffer_clear(bufnr)
 		elseif cmd == "paste" then
 			local start_pos = vim.fn.getpos("'<")
 			local end_pos = vim.fn.getpos("'>")
 			local start_line = start_pos[2]
 			local end_line = end_pos[2]
-
 			local current_buf = vim.api.nvim_get_current_buf()
 			local lines = vim.api.nvim_buf_get_lines(current_buf, start_line - 1, end_line, false)
 			local text = table.concat(lines, "\n")
@@ -280,7 +341,7 @@ local function command_set_ui(bufnr, winid)
 	})
 end
 
--- // INPUT PARSERS --
+-- // OPTS PARSERS --
 
 ---@param raw any
 ---@return Mana2.ModelConfig|nil, string?
@@ -352,7 +413,7 @@ end
 
 ---@param raw any
 ---@param model_cfgs Mana2.ModelConfig
----@return Mana2.ModelConfig|nil, string?
+---@return Mana2.ModelConfig_|nil, string?
 local function parse_opts_default_model(raw, model_cfgs)
 	if type(raw) ~= "string" then
 		return nil, "default_model must be a string"
@@ -363,51 +424,77 @@ local function parse_opts_default_model(raw, model_cfgs)
 		return nil, string.format(tmp, raw)
 	end
 
-	return { [raw] = model_cfgs[raw] }
+	return model_cfgs[raw]
 end
 
+-- // SETUP --
+
 M.setup = function(opts)
+	---@type Mana2.ModelConfig|nil, string?
 	local model_cfgs, m_err = parse_opts_models(opts.models)
 	if not model_cfgs then
 		vim.notify("Mana.nvim error: " .. m_err, vim.log.levels.ERROR)
 		return
 	end
 
+	---@type Mana2.EndpointConfig|nil, string?
 	local endpoint_cfgs, e_err = parse_opts_endpoints(opts.endpoints)
 	if not endpoint_cfgs then
 		vim.notify("Mana.nvim error: " .. e_err, vim.log.levels.ERROR)
 		return
 	end
 
+	---@type Mana2.ModelConfig_|nil, string?
 	local default_model_cfg, dm_err = parse_opts_default_model(opts.default_model, model_cfgs)
 	if not default_model_cfg then
 		vim.notify("Mana.nvim error: " .. dm_err, vim.log.levels.ERROR)
 		return
 	end
 
-	vim.notify(vim.inspect(model_cfgs))
-	vim.notify(vim.inspect(endpoint_cfgs))
-	vim.notify(vim.inspect(default_model_cfg))
+	local buffer_state = {
+		bufnr = buffer_get(),
+		winid = nil,
+	}
 
-	-- ---@type table<Mana2.Model, function>
-	-- local fetchers = {}
-	-- for model, model_cfg in pairs(model_cfgs) do
-	-- 	local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
-	-- 	fetchers[model] = fetch(model_cfg, endpoint_cfg, 1)
-	-- end
-	--
-	-- local buffer_state = {
-	-- 	bufnr = buffer_get(),
-	-- 	winid = nil,
-	-- }
-	--
-	-- local prepend = string.format("model: %s\n\n<user>\n\n", default_model_cfg.name)
-	-- vim.api.nvim_buf_set_lines(buffer_state.bufnr, 0, -1, false, vim.split(prepend, "\n"))
-	--
-	-- keymap_set_ui(buffer_state.bufnr)
-	-- command_set_ui(buffer_state.bufnr, buffer_state.winid)
-	-- keymap_set_chat(buffer_state.bufnr, fetchers[default_model_cfg.name])
-	-- command_set_chat(buffer_state.bufnr, model_cfgs, fetchers)
+	local function stdout_callback(_, data)
+		local chunk = stream_parse(data)
+		vim.schedule(function()
+			buffer_append(buffer_state.bufnr, chunk)
+		end)
+
+		if data:match("data: %[DONE%]") then
+			vim.schedule(function()
+				buffer_append(buffer_state.bufnr, "\n<user>\n")
+			end)
+		end
+	end
+
+	local function stderr_callback(_, data)
+		vim.schedule(function()
+			buffer_append(buffer_state.bufnr, data)
+		end)
+	end
+
+	local pre_fetcher = fetch(stdout_callback, stderr_callback)
+	local fetcher = pre_fetcher(default_model_cfg.name, endpoint_cfgs[default_model_cfg.endpoint])
+
+	local default_model_str = string.format("model: %s@%s", default_model_cfg.endpoint, default_model_cfg.name)
+	local prepend = string.format("%s\n\n<user>\n\n", default_model_str)
+	vim.api.nvim_buf_set_lines(buffer_state.bufnr, 0, -1, false, vim.split(prepend, "\n"))
+
+	keymap_set_ui(buffer_state.bufnr)
+	command_set_ui(buffer_state.bufnr, buffer_state.winid)
+	keymap_set_chat(buffer_state.bufnr, fetcher)
+	command_set_chat(buffer_state.bufnr, model_cfgs, endpoint_cfgs, pre_fetcher)
 end
 
 return M
+
+-- -- maybe fetchers shouldn't be a separate thing
+-- -- but maybe.. model_cfg.fetcher,
+-- -- certain invariants holds so i technically can do this sort of thing
+-- local fetchers = {}
+-- for model, model_cfg in pairs(model_cfgs) do
+-- 	local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
+-- 	fetchers[model] = fetch(model_cfg, endpoint_cfg, buffer_state.bufnr)
+-- end
