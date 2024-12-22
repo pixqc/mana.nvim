@@ -6,18 +6,16 @@ local action_state = require("telescope.actions.state")
 local Job = require("plenary.job")
 local M = {}
 
----@alias Mana2.Model "gemini" | "sonnet" | "gemini_thinking"
----@alias Mana2.Endpoint "aistudio" | "openrouter"
 ---@alias Mana2.EndpointConfig_ {url: string, api_key: string}
----@alias Mana2.EndpointConfig table<Mana2.Endpoint, Mana2.EndpointConfig_>
----@alias Mana2.ModelConfig_ {endpoint: Mana2.Endpoint, name:string, system_prompt: string, temperature: number, top_p: number}
----@alias Mana2.ModelConfig table<Mana2.Model, Mana2.ModelConfig_>
+---@alias Mana2.EndpointConfig table<string, Mana2.EndpointConfig_>
+---@alias Mana2.ModelConfig_ {endpoint: string, name:string, system_prompt: string, temperature: number, top_p: number}
+---@alias Mana2.ModelConfig table<string, Mana2.ModelConfig_>
 ---@alias Mana2.BufferState {winid: integer|nil, bufnr: integer}
 
 ---@alias Mana2.Role "user" | "assistant" | "system"
 ---@alias Mana2.Messages { role: Mana2.Role, content:  { type: "text", text: string }[] }[]
----@alias Mana2.Prefetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): fun(messages: Mana2.Messages)
 ---@alias Mana2.Fetcher fun(messages: Mana2.Messages)
+---@alias Mana2.Prefetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): Mana2.Fetcher
 
 -- // WINDOW+BUFFER STUFFS --
 
@@ -211,14 +209,14 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetch
 					local selection = action_state.get_selected_entry()
 					if selection then
 						actions.close(prompt_bufnr)
-					local model = selection.value.name
-					local model_cfg = model_cfgs[model]
-					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
-					local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
-					keymap_set_chat(bufnr, fetcher)
-					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
-						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
-					})
+						local model = selection.value.name
+						local model_cfg = model_cfgs[model]
+						local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
+						local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
+						keymap_set_chat(bufnr, fetcher)
+						vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
+							string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
+						})
 					else
 						actions.close(prompt_bufnr)
 					end
