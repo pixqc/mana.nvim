@@ -8,9 +8,8 @@ local M = {}
 
 ---@alias Mana.EndpointConfig_ {url: string, api_key: string}
 ---@alias Mana.EndpointConfig table<string, Mana.EndpointConfig_>
----@alias Mana.ModelConfig_ {endpoint: string, name:string, system_prompt: string, temperature: number, top_p: number}
+---@alias Mana.ModelConfig_ {endpoint: string, name: string, system_prompt: string, temperature: number, top_p: number}
 ---@alias Mana.ModelConfig table<string, Mana.ModelConfig_>
----@alias Mana.BufferState {winid: integer|nil, bufnr: integer}
 
 ---@alias Mana.Role "user" | "assistant" | "system"
 ---@alias Mana.Messages { role: Mana.Role, content:  { type: "text", text: string }[] }[]
@@ -157,9 +156,10 @@ local function stream_parse(data)
 end
 
 ---@param bufnr integer
+---@param system_message string
 ---@param fetcher fun(messages: Mana.Messages)
 ---@return nil
-local function keymap_set_chat(bufnr, fetcher)
+local function keymap_set_chat(bufnr, system_message, fetcher)
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<CR>", "", {
 		callback = function()
 			local messages = buffer_parse(bufnr)
@@ -168,6 +168,12 @@ local function keymap_set_chat(bufnr, fetcher)
 				return -- no user input, do nothing
 			end
 			if messages then
+				if system_message and system_message ~= "" then
+					table.insert(messages, 1, {
+						role = "system",
+						content = { { type = "text", text = system_message } },
+					})
+				end
 				buffer_append(bufnr, "\n\n<assistant>\n\n")
 				fetcher(messages)
 			end
@@ -181,7 +187,7 @@ end
 ---@param endpoint_cfgs Mana.EndpointConfig
 ---@param bufnr integer
 ---@param prefetcher Mana.Prefetcher
-local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
+local function model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
 	local models = {}
 	for name, cfg in pairs(model_cfgs) do
 		table.insert(models, {
@@ -213,7 +219,7 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetch
 						local model_cfg = model_cfgs[model]
 						local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
 						local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
-						keymap_set_chat(bufnr, fetcher)
+						keymap_set_chat(bufnr, model_cfg.system_prompt, fetcher)
 						vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
 							string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
 						})
@@ -319,14 +325,12 @@ local function command_set(bufnr, winid, model_cfgs, endpoint_cfgs, prefetcher)
 		elseif cmd == "clear" then
 			buffer_clear(bufnr)
 		elseif cmd == "switch" then
-			telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
+			model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
 		elseif cmd == "paste" then
-			local start_pos = vim.fn.getpos("'<")
-			local end_pos = vim.fn.getpos("'>")
-			local start_line = start_pos[2]
-			local end_line = end_pos[2]
-			local current_buf = vim.api.nvim_get_current_buf()
-			local lines = vim.api.nvim_buf_get_lines(current_buf, start_line - 1, end_line, false)
+			local start = vim.fn.getpos("'<")[2]
+			local end_ = vim.fn.getpos("'>")[2]
+			local buf = vim.api.nvim_get_current_buf()
+			local lines = vim.api.nvim_buf_get_lines(buf, start - 1, end_, false)
 			local text = table.concat(lines, "\n")
 			buffer_append(bufnr, "\n" .. text .. "\n\n")
 		end
@@ -449,27 +453,25 @@ M.setup = function(opts)
 		return
 	end
 
-	local buffer_state = {
-		bufnr = buffer_get(),
-		winid = nil,
-	}
+	local bufnr = buffer_get()
+	local winid = nil
 
 	local function stdout_callback(_, data)
 		local chunk = stream_parse(data)
 		vim.schedule(function()
-			buffer_append(buffer_state.bufnr, chunk)
+			buffer_append(bufnr, chunk)
 		end)
 
 		if data:match("data: %[DONE%]") then
 			vim.schedule(function()
-				buffer_append(buffer_state.bufnr, "\n<user>\n")
+				buffer_append(bufnr, "\n<user>\n")
 			end)
 		end
 	end
 
 	local function stderr_callback(_, data)
 		vim.schedule(function()
-			buffer_append(buffer_state.bufnr, data)
+			buffer_append(bufnr, data)
 		end)
 	end
 
@@ -478,11 +480,11 @@ M.setup = function(opts)
 
 	local prepend_ = string.format("model: %s@%s", default.endpoint, default.name)
 	local prepend = string.format("%s\n\n<user>\n\n", prepend_)
-	vim.api.nvim_buf_set_lines(buffer_state.bufnr, 0, -1, false, vim.split(prepend, "\n"))
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split(prepend, "\n"))
 
-	keymap_set_ui(buffer_state.bufnr)
-	keymap_set_chat(buffer_state.bufnr, fetcher)
-	command_set(buffer_state.bufnr, buffer_state.winid, model_cfgs, endpoint_cfgs, prefetcher)
+	keymap_set_ui(bufnr)
+	keymap_set_chat(bufnr, default.system_prompt, fetcher)
+	command_set(bufnr, winid, model_cfgs, endpoint_cfgs, prefetcher)
 end
 
 return M
