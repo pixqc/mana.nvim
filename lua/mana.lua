@@ -43,6 +43,9 @@ local function buffer_get()
 	vim.api.nvim_buf_set_name(bufnr, name)
 	vim.api.nvim_buf_set_name(bufnr, "mana")
 	vim.api.nvim_set_option_value("syntax", "markdown", { buf = bufnr })
+	vim.api.nvim_set_option_value("tabstop", 2, { buf = bufnr })
+	vim.api.nvim_set_option_value("shiftwidth", 2, { buf = bufnr })
+	vim.api.nvim_set_option_value("expandtab", true, { buf = bufnr })
 	vim.lsp.stop_client(vim.lsp.get_clients({ bufnr = bufnr }))
 	return bufnr -- create new buffer, return bufnr
 end
