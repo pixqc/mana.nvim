@@ -208,9 +208,9 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetch
 			sorter = conf.generic_sorter({}),
 			attach_mappings = function(prompt_bufnr, _)
 				actions.select_default:replace(function()
-					actions.close(prompt_bufnr)
 					local selection = action_state.get_selected_entry()
-					---@type Mana2.Model
+					if selection then
+						actions.close(prompt_bufnr)
 					local model = selection.value.name
 					local model_cfg = model_cfgs[model]
 					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
@@ -219,6 +219,9 @@ local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetch
 					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
 						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
 					})
+					else
+						actions.close(prompt_bufnr)
+					end
 				end)
 				return true
 			end,
