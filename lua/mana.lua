@@ -6,16 +6,16 @@ local action_state = require("telescope.actions.state")
 local Job = require("plenary.job")
 local M = {}
 
----@alias Mana2.EndpointConfig_ {url: string, api_key: string}
----@alias Mana2.EndpointConfig table<string, Mana2.EndpointConfig_>
----@alias Mana2.ModelConfig_ {endpoint: string, name:string, system_prompt: string, temperature: number, top_p: number}
----@alias Mana2.ModelConfig table<string, Mana2.ModelConfig_>
----@alias Mana2.BufferState {winid: integer|nil, bufnr: integer}
+---@alias Mana.EndpointConfig_ {url: string, api_key: string}
+---@alias Mana.EndpointConfig table<string, Mana.EndpointConfig_>
+---@alias Mana.ModelConfig_ {endpoint: string, name:string, system_prompt: string, temperature: number, top_p: number}
+---@alias Mana.ModelConfig table<string, Mana.ModelConfig_>
+---@alias Mana.BufferState {winid: integer|nil, bufnr: integer}
 
----@alias Mana2.Role "user" | "assistant" | "system"
----@alias Mana2.Messages { role: Mana2.Role, content:  { type: "text", text: string }[] }[]
----@alias Mana2.Fetcher fun(messages: Mana2.Messages)
----@alias Mana2.Prefetcher fun(model: string, endpoint_cfg: Mana2.EndpointConfig_): Mana2.Fetcher
+---@alias Mana.Role "user" | "assistant" | "system"
+---@alias Mana.Messages { role: Mana.Role, content:  { type: "text", text: string }[] }[]
+---@alias Mana.Fetcher fun(messages: Mana.Messages)
+---@alias Mana.Prefetcher fun(model: string, endpoint_cfg: Mana.EndpointConfig_): Mana.Fetcher
 
 -- // WINDOW+BUFFER STUFFS --
 
@@ -72,7 +72,7 @@ local function buffer_append(bufnr, chunk)
 end
 
 ---@param bufnr integer
----@return Mana2.Messages
+---@return Mana.Messages
 local function buffer_parse(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local messages = {}
@@ -157,7 +157,7 @@ local function stream_parse(data)
 end
 
 ---@param bufnr integer
----@param fetcher fun(messages: Mana2.Messages)
+---@param fetcher fun(messages: Mana.Messages)
 ---@return nil
 local function keymap_set_chat(bufnr, fetcher)
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<CR>", "", {
@@ -177,10 +177,10 @@ local function keymap_set_chat(bufnr, fetcher)
 	})
 end
 
----@param model_cfgs Mana2.ModelConfig
----@param endpoint_cfgs Mana2.EndpointConfig
+---@param model_cfgs Mana.ModelConfig
+---@param endpoint_cfgs Mana.EndpointConfig
 ---@param bufnr integer
----@param prefetcher Mana2.Prefetcher
+---@param prefetcher Mana.Prefetcher
 local function telescope_model_switch(model_cfgs, endpoint_cfgs, bufnr, prefetcher)
 	local models = {}
 	for name, cfg in pairs(model_cfgs) do
@@ -233,7 +233,7 @@ end
 ---pass messages to mk_prefetcher(callbacks)(configs) to chat with model
 ---@param stdout_callback function
 ---@param stderr_callback function
----@return Mana2.Prefetcher
+---@return Mana.Prefetcher
 local function mk_prefetcher(stdout_callback, stderr_callback)
 	return function(model_name, endpoint_cfg)
 		return function(messages)
@@ -290,9 +290,9 @@ end
 
 ---@param bufnr integer
 ---@param winid integer|nil
----@param model_cfgs Mana2.ModelConfig
----@param endpoint_cfgs Mana2.EndpointConfig
----@param prefetcher Mana2.Prefetcher
+---@param model_cfgs Mana.ModelConfig
+---@param endpoint_cfgs Mana.EndpointConfig
+---@param prefetcher Mana.Prefetcher
 local function command_set(bufnr, winid, model_cfgs, endpoint_cfgs, prefetcher)
 	vim.api.nvim_create_user_command("Mana", function(opts)
 		local args = vim.split(opts.args, "%s+")
@@ -342,7 +342,7 @@ end
 -- // OPTS PARSERS --
 
 ---@param raw any
----@return Mana2.ModelConfig|nil, string?
+---@return Mana.ModelConfig|nil, string?
 local function parse_opts_models(raw)
 	if type(raw) ~= "table" then
 		return nil, "models must be a table"
@@ -379,7 +379,7 @@ local function parse_opts_models(raw)
 end
 
 ---@param raw any
----@return Mana2.EndpointConfig|nil, string?
+---@return Mana.EndpointConfig|nil, string?
 local function parse_opts_endpoints(raw)
 	if type(raw) ~= "table" then
 		return nil, "endpoints must be a table"
@@ -410,8 +410,8 @@ local function parse_opts_endpoints(raw)
 end
 
 ---@param raw any
----@param model_cfgs Mana2.ModelConfig
----@return Mana2.ModelConfig_|nil, string?
+---@param model_cfgs Mana.ModelConfig
+---@return Mana.ModelConfig_|nil, string?
 local function parse_opts_default_model(raw, model_cfgs)
 	if type(raw) ~= "string" then
 		return nil, "default_model must be a string"
@@ -428,21 +428,21 @@ end
 -- // SETUP --
 
 M.setup = function(opts)
-	---@type Mana2.ModelConfig|nil, string?
+	---@type Mana.ModelConfig|nil, string?
 	local model_cfgs, m_err = parse_opts_models(opts.models)
 	if not model_cfgs then
 		vim.notify("Mana.nvim error: " .. m_err, vim.log.levels.ERROR)
 		return
 	end
 
-	---@type Mana2.EndpointConfig|nil, string?
+	---@type Mana.EndpointConfig|nil, string?
 	local endpoint_cfgs, e_err = parse_opts_endpoints(opts.endpoints)
 	if not endpoint_cfgs then
 		vim.notify("Mana.nvim error: " .. e_err, vim.log.levels.ERROR)
 		return
 	end
 
-	---@type Mana2.ModelConfig_|nil, string?
+	---@type Mana.ModelConfig_|nil, string?
 	local default, dm_err = parse_opts_default_model(opts.default_model, model_cfgs)
 	if not default then
 		vim.notify("Mana.nvim error: " .. dm_err, vim.log.levels.ERROR)
