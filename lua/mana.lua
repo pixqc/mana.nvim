@@ -1,8 +1,3 @@
-local pickers = require("telescope.pickers")
-local finders = require("telescope.finders")
-local conf = require("telescope.config").values
-local actions = require("telescope.actions")
-local action_state = require("telescope.actions.state")
 local Job = require("plenary.job")
 local M = {}
 
@@ -199,41 +194,30 @@ local function model_switch(model_cfgs, endpoint_cfgs, prefetcher, bufnr)
 		})
 	end
 
-	pickers
-		.new({}, {
-			prompt_title = "Mana switch model",
-			finder = finders.new_table({
-				results = models,
-				entry_maker = function(entry)
-					return {
-						value = entry,
-						display = entry.display,
-						ordinal = entry.display,
-					}
-				end,
-			}),
-			sorter = conf.generic_sorter({}),
-			attach_mappings = function(prompt_bufnr, _)
-				actions.select_default:replace(function()
-					local selection = action_state.get_selected_entry()
-					if selection then
-						actions.close(prompt_bufnr)
-						local model = selection.value.name
-						local model_cfg = model_cfgs[model]
-						local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
-						local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
-						keymap_set_chat(model_cfg.system_prompt, fetcher, bufnr)
-						vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
-							string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
-						})
-					else
-						actions.close(prompt_bufnr)
-					end
-				end)
-				return true
-			end,
-		})
-		:find()
+	vim.ui.select(
+		vim.tbl_map(function(model)
+			return model.display
+		end, models),
+		{ prompt = "Mana switch model" },
+		function(selected)
+			if not selected then
+				return
+			end -- user cancelled
+			for _, model in ipairs(models) do
+				if model.display == selected then
+					local model_cfg = model_cfgs[model.name]
+					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
+					local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
+
+					keymap_set_chat(model_cfg.system_prompt, fetcher, bufnr)
+					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
+						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
+					})
+					break
+				end
+			end
+		end
+	)
 end
 
 ---mk_prefetcher(callbacks)(configs)(messages)
