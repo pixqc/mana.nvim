@@ -16,7 +16,9 @@ local M = {}
 ---@field top_p number
 ---@field fetcher Mana.Fetcher
 
----@alias Mana.Prefetcher fun(model_name: string, endpoint_cfg: Mana.EndpointConfig): Mana.Fetcher
+---@alias Mana.Prefetcher fun(
+--- model_name: string,
+--- endpoint_cfg: Mana.EndpointConfig): Mana.Fetcher
 ---@alias Mana.Fetcher fun(messages: Mana.Messages)
 
 ---@class Mana.ModelConfigs
