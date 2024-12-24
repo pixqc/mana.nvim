@@ -91,11 +91,11 @@ end
 local function buffer_parse(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local messages = {}
-	local current_role = nil
+	local current_role = "user"
 	local current_text = {}
 
 	local function add_message()
-		if current_role and #current_text > 0 then
+		if #current_text > 0 then
 			local combined_text = table.concat(current_text, "\n")
 			table.insert(messages, {
 				role = current_role,
@@ -107,19 +107,18 @@ local function buffer_parse(bufnr)
 	end
 
 	for _, line in ipairs(lines) do
-		if line == "<user>" then
-			add_message()
-			current_role = "user"
-			current_text = {}
-		elseif line == "<assistant>" then
+		if line == "<assistant>" then
 			add_message()
 			current_role = "assistant"
 			current_text = {}
-		elseif current_role and vim.trim(line) ~= "" then
+		elseif line == "</assistant>" then
+			add_message()
+			current_role = "user"
+			current_text = {}
+		elseif vim.trim(line) ~= "" then
 			table.insert(current_text, vim.trim(line))
 		end
 	end
-
 	add_message() -- add the last message
 	return messages
 end
@@ -188,6 +187,7 @@ local function keymap_set_chat(model_cfg, bufnr)
 						content = { { type = "text", text = model_cfg.system_prompt } },
 					})
 				end
+				vim.notify(vim.inspect(messages))
 				buffer_append("\n\n<assistant>\n\n", bufnr)
 				model_cfg.fetcher(messages)
 			end
@@ -447,7 +447,7 @@ M.setup = function(opts)
 
 		if data:match("data: %[DONE%]") then
 			vim.schedule(function()
-				buffer_append("\n<user>\n", bufnr)
+				buffer_append("\n</assistant>\n", bufnr)
 			end)
 		end
 	end
@@ -482,7 +482,6 @@ M.setup = function(opts)
 	end
 
 	local winbar = "%=" .. default.endpoint .. "@" .. default.name
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, vim.split("<user>\n\n", "\n"))
 	keymap_set_ui(bufnr)
 	keymap_set_chat(default, bufnr)
 	command_set(winbar, winid, bufnr)
