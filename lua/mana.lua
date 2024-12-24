@@ -33,11 +33,8 @@ local function buffer_get()
 	end
 
 	local bufnr = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_set_option_value("modifiable", true, { buf = bufnr })
-	local name = string.format("%s/mana", vim.fn.getcwd())
-	vim.api.nvim_buf_set_name(bufnr, name)
 	vim.api.nvim_buf_set_name(bufnr, "mana")
-	vim.api.nvim_set_option_value("syntax", "markdown", { buf = bufnr })
+	vim.api.nvim_set_option_value("modifiable", true, { buf = bufnr })
 	vim.api.nvim_set_option_value("tabstop", 2, { buf = bufnr })
 	vim.api.nvim_set_option_value("shiftwidth", 2, { buf = bufnr })
 	vim.api.nvim_set_option_value("expandtab", true, { buf = bufnr })
@@ -112,7 +109,7 @@ local function window_create(bufnr)
 	vim.cmd("botright vsplit")
 	local winid = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(winid, bufnr)
-	vim.api.nvim_win_set_width(winid, math.floor(vim.o.columns * 0.35))
+	vim.api.nvim_win_set_width(winid, 65) -- should be editable by opts
 	vim.api.nvim_set_option_value("number", true, { win = winid })
 	vim.api.nvim_set_option_value("relativenumber", true, { win = winid })
 	vim.api.nvim_set_option_value("winfixwidth", true, { win = winid })
@@ -123,8 +120,7 @@ local function window_create(bufnr)
 	vim.api.nvim_create_autocmd("WinResized", {
 		callback = function()
 			if vim.api.nvim_win_is_valid(winid) then
-				local width = math.floor(vim.o.columns * 0.35)
-				vim.api.nvim_win_set_width(winid, width)
+				vim.api.nvim_win_set_width(winid, 65)
 			end
 		end,
 	})
