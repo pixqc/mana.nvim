@@ -187,7 +187,6 @@ local function keymap_set_chat(model_cfg, bufnr)
 						content = { { type = "text", text = model_cfg.system_prompt } },
 					})
 				end
-				vim.notify(vim.inspect(messages))
 				buffer_append("\n\n<assistant>\n\n", bufnr)
 				model_cfg.fetcher(messages)
 			end
@@ -197,44 +196,33 @@ local function keymap_set_chat(model_cfg, bufnr)
 	})
 end
 
--- ---@param model_cfgs Mana.ModelConfigs
--- ---@param endpoint_cfgs Mana.EndpointConfigs
--- ---@param prefetcher Mana.Prefetcher
--- ---@param bufnr integer
--- local function model_switch(model_cfgs, endpoint_cfgs, prefetcher, bufnr)
--- 	local models = {}
--- 	for name, cfg in pairs(model_cfgs) do
--- 		table.insert(models, {
--- 			name = name,
--- 			display = string.format("%s@%s", cfg.endpoint, cfg.name),
--- 		})
--- 	end
---
--- 	vim.ui.select(
--- 		vim.tbl_map(function(model)
--- 			return model.display
--- 		end, models),
--- 		{ prompt = "Mana switch model" },
--- 		function(selected)
--- 			if not selected then
--- 				return
--- 			end -- user cancelled
--- 			for _, model in ipairs(models) do
--- 				if model.display == selected then
--- 					local model_cfg = model_cfgs[model.name]
--- 					local endpoint_cfg = endpoint_cfgs[model_cfg.endpoint]
--- 					local fetcher = prefetcher(model_cfg.name, endpoint_cfg)
---
--- 					keymap_set_chat(model_cfg.system_prompt, fetcher, bufnr)
--- 					vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, {
--- 						string.format("model: %s@%s", model_cfg.endpoint, model_cfg.name),
--- 					})
--- 					break
--- 				end
--- 			end
--- 		end
--- 	)
--- end
+---@param model_cfgs Mana.ModelConfigs
+---@return fun(winid:integer, bufnr:integer)
+local function model_switch(model_cfgs)
+	return function(winid, bufnr)
+		local display_to_cfg = {}
+		local displays = {}
+
+		for _, cfg in pairs(model_cfgs) do
+			local display = string.format("%s@%s", cfg.endpoint, cfg.name)
+			display_to_cfg[display] = cfg
+			table.insert(displays, display)
+		end
+
+		vim.ui.select(displays, {
+			prompt = "Mana switch model",
+		}, function(selected)
+			if not selected then
+				return
+			end -- user cancelled
+
+			local cfg = display_to_cfg[selected]
+			local winbar = string.format("%%=%s@%s", cfg.endpoint, cfg.name)
+			keymap_set_chat(cfg, bufnr)
+			vim.api.nvim_set_option_value("winbar", winbar, { win = winid })
+		end)
+	end
+end
 
 ---mk_prefetcher(callbacks)(configs)(messages)
 ---callbacks are same no matter the model
@@ -299,10 +287,12 @@ local function keymap_set_ui(bufnr)
 	})
 end
 
+---model_switch_ is return of model_switch(model_cfg)
+---@param model_switch_ fun(winid:integer, bufnr:integer)
 ---@param winbar string
 ---@param winid integer|nil
 ---@param bufnr integer
-local function command_set(winbar, winid, bufnr)
+local function command_set(model_switch_, winbar, winid, bufnr)
 	vim.api.nvim_create_user_command("Mana", function(opts)
 		local args = vim.split(opts.args, "%s+")
 		local cmd = args[1]
@@ -336,6 +326,13 @@ local function command_set(winbar, winid, bufnr)
 			local lines = vim.api.nvim_buf_get_lines(buf, start - 1, end_, false)
 			local text = table.concat(lines, "\n")
 			buffer_append("\n" .. text .. "\n\n", bufnr)
+		elseif cmd == "switch" then
+			if winid and vim.api.nvim_win_is_valid(winid) then
+				model_switch_(winid, bufnr)
+			else
+				winid = window_create(bufnr)
+				model_switch_(winid, bufnr)
+			end
 		end
 	end, {
 		nargs = 1,
@@ -481,10 +478,11 @@ M.setup = function(opts)
 		return
 	end
 
+	local model_switch_ = model_switch(model_cfgs)
 	local winbar = "%=" .. default.endpoint .. "@" .. default.name
 	keymap_set_ui(bufnr)
 	keymap_set_chat(default, bufnr)
-	command_set(winbar, winid, bufnr)
+	command_set(model_switch_, winbar, winid, bufnr)
 end
 
 return M
