@@ -152,25 +152,6 @@ end
 
 -- // CHAT STUFFS --
 
----@param data string
----@return string
-local function stream_parse(data)
-	for line in data:gmatch("[^\r\n]+") do
-		if line:match("^data: ") then
-			local json_str = line:sub(7)
-			local ok, decoded = pcall(vim.json.decode, json_str)
-			if ok and decoded and decoded.choices then
-				for _, choice in ipairs(decoded.choices) do
-					if choice.delta and choice.delta.content then
-						return choice.delta.content
-					end
-				end
-			end
-		end
-	end
-	return ""
-end
-
 ---@param model_cfg Mana.ModelConfig
 ---@param bufnr integer
 ---@return nil
@@ -233,9 +214,8 @@ end
 ---fetcher lives in Mana.ModelConfig
 ---call fetcher(messages) to chat with llm
 ---@param stdout_callback function
----@param stderr_callback function
 ---@return Mana.Prefetcher
-local function mk_prefetcher(stdout_callback, stderr_callback)
+local function mk_prefetcher(stdout_callback)
 	return function(model_name, endpoint_cfg)
 		return function(messages)
 			local request_body = {
@@ -259,7 +239,6 @@ local function mk_prefetcher(stdout_callback, stderr_callback)
 					vim.json.encode(request_body),
 				},
 				on_stdout = stdout_callback,
-				on_stderr = stderr_callback,
 			}):start()
 		end
 	end
@@ -439,25 +418,36 @@ M.setup = function(opts)
 	local winid = nil
 
 	local function stdout_callback(_, data)
-		local chunk = stream_parse(data)
-		vim.schedule(function()
-			buffer_append(chunk, bufnr)
-		end)
-
-		if data:match("data: %[DONE%]") then
+		for line in data:gmatch("[^\r\n]+") do
+			if line:match("^data: ") then
+				if line:match("data: %[DONE%]") then -- llm done talking
 			vim.schedule(function()
 				buffer_append("\n</assistant>\n", bufnr)
 			end)
+				else
+					local json_str = line:sub(7)
+					local ok, decoded = pcall(vim.json.decode, json_str)
+					if ok and decoded and decoded.choices then
+						for _, choice in ipairs(decoded.choices) do
+							if choice.delta and choice.delta.content then
+								vim.schedule(function()
+									buffer_append(choice.delta.content, bufnr) -- llm talking
+								end)
+							end
+						end
+		end
+	end
+			else
+				if data ~= ": OPENROUTER PROCESSING" then
+		vim.schedule(function()
+						buffer_append(data, bufnr) -- may contain error msgs
+		end)
+				end
+			end
 		end
 	end
 
-	local function stderr_callback(_, data)
-		vim.schedule(function()
-			buffer_append(data, bufnr)
-		end)
-	end
-
-	local prefetcher = mk_prefetcher(stdout_callback, stderr_callback)
+	local prefetcher = mk_prefetcher(stdout_callback)
 
 	---@type Mana.EndpointConfigs|nil, string?
 	local endpoint_cfgs, e_err = parse_opts_endpoints(opts.endpoints)
