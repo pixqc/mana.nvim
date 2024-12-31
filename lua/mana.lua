@@ -68,14 +68,7 @@ end
 ---@param bufnr integer
 ---@return nil
 local function buffer_clear(bufnr)
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local new_lines = {}
-	for i = 1, math.min(3, #lines) do
-		table.insert(new_lines, lines[i])
-	end
-	table.insert(new_lines, "")
-	table.insert(new_lines, "") -- append \n\n
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
 	buffer_cursor_down(bufnr)
 end
 
