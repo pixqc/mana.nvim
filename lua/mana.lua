@@ -300,6 +300,12 @@ local function command_set(model_switch_, winbar, winid, bufnr)
 			local lines = vim.api.nvim_buf_get_lines(buf, start - 1, end_, false)
 			local text = table.concat(lines, "\n")
 			buffer_append("\n" .. text .. "\n\n", bufnr)
+
+			if not winid or not vim.api.nvim_win_is_valid(winid) then
+				winid = window_create(bufnr)
+				buffer_cursor_down(bufnr)
+				vim.api.nvim_set_option_value("winbar", winbar, { win = winid })
+			end
 		elseif cmd == "switch" then
 			if winid and vim.api.nvim_win_is_valid(winid) then
 				model_switch_(winid, bufnr)
