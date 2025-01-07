@@ -328,7 +328,7 @@ local function command_set(model_switch_, winbar, winid, bufnr)
 		nargs = 1,
 		range = true,
 		complete = function()
-			return { "open", "close", "toggle", "paste" }
+			return { "open", "close", "toggle", "clear", "paste", "switch" }
 		end,
 	})
 end
