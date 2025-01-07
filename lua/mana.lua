@@ -204,10 +204,6 @@ end
 ---prefetcher = mk_prefetcher(callback)
 ---fetcher = prefetcher(configs)
 ---call fetcher(messages) to chat with llm
----
----curried because callback is same no matter the model
----make fetcher for each model
----
 ---@param stdout_callback function
 ---@return Mana.Prefetcher
 local function mk_prefetcher(stdout_callback)
@@ -239,29 +235,41 @@ local function mk_prefetcher(stdout_callback)
 	end
 end
 
--- // UI STUFFS --
-
 ---@param bufnr integer
----@return nil
-local function keymap_set_ui(bufnr)
-	-- clear chat
-	vim.api.nvim_buf_set_keymap(bufnr, "n", "<C-n>", "", {
-		callback = function()
-			buffer_clear(bufnr)
-		end,
-		noremap = true,
-		silent = true,
-	})
-
-	-- clear chat (insert mode)
-	vim.api.nvim_buf_set_keymap(bufnr, "i", "<C-n>", "", {
-		callback = function()
-			buffer_clear(bufnr)
-		end,
-		noremap = true,
-		silent = true,
-	})
+---@return fun(_, data) -- callback, to be passed to curl
+local function mk_stdout_callback(bufnr)
+	return function(_, data)
+		for line in data:gmatch("[^\r\n]+") do
+			if line:match("^data: ") then
+				if line:match("data: %[DONE%]") then -- llm done talking
+					vim.schedule(function()
+						buffer_append("\n</assistant>\n", bufnr)
+					end)
+				else
+					local json_str = line:sub(7)
+					local ok, decoded = pcall(vim.json.decode, json_str)
+					if ok and decoded and decoded.choices then
+						for _, choice in ipairs(decoded.choices) do
+							if choice.delta and choice.delta.content then
+								vim.schedule(function()
+									buffer_append(choice.delta.content, bufnr) -- llm talking
+								end)
+							end
+						end
+					end
+				end
+			else
+				if data ~= ": OPENROUTER PROCESSING" then
+					vim.schedule(function()
+						buffer_append(data, bufnr) -- may contain error msgs
+					end)
+				end
+			end
+		end
+	end
 end
+
+-- // UI STUFFS --
 
 ---model_switch_ is return of model_switch(model_cfg)
 ---@param model_switch_ fun(winid:integer, bufnr:integer)
@@ -418,36 +426,7 @@ M.setup = function(opts)
 	local bufnr = buffer_get()
 	local winid = nil
 
-	local function stdout_callback(_, data)
-		for line in data:gmatch("[^\r\n]+") do
-			if line:match("^data: ") then
-				if line:match("data: %[DONE%]") then -- llm done talking
-					vim.schedule(function()
-						buffer_append("\n</assistant>\n", bufnr)
-					end)
-				else
-					local json_str = line:sub(7)
-					local ok, decoded = pcall(vim.json.decode, json_str)
-					if ok and decoded and decoded.choices then
-						for _, choice in ipairs(decoded.choices) do
-							if choice.delta and choice.delta.content then
-								vim.schedule(function()
-									buffer_append(choice.delta.content, bufnr) -- llm talking
-								end)
-							end
-						end
-					end
-				end
-			else
-				if data ~= ": OPENROUTER PROCESSING" then
-					vim.schedule(function()
-						buffer_append(data, bufnr) -- may contain error msgs
-					end)
-				end
-			end
-		end
-	end
-
+	local stdout_callback = mk_stdout_callback(bufnr)
 	local prefetcher = mk_prefetcher(stdout_callback)
 
 	---@type Mana.EndpointConfigs|nil, string?
@@ -473,7 +452,6 @@ M.setup = function(opts)
 
 	local model_switch_ = model_switch(model_cfgs)
 	local winbar = "%=" .. default.endpoint .. "@" .. default.name
-	keymap_set_ui(bufnr)
 	keymap_set_chat(default, bufnr)
 	command_set(model_switch_, winbar, winid, bufnr)
 end
