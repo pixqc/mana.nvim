@@ -200,12 +200,14 @@ local function model_switch(model_cfgs)
 	end
 end
 
----mk_prefetcher(callbacks)(configs)(messages)
----callbacks are same no matter the model
----prefetcher = mk_prefetcher(callbacks)
+---mk_prefetcher(callback)(configs)(messages)
+---prefetcher = mk_prefetcher(callback)
 ---fetcher = prefetcher(configs)
----fetcher lives in Mana.ModelConfig
 ---call fetcher(messages) to chat with llm
+---
+---curried because callback is same no matter the model
+---make fetcher for each model
+---
 ---@param stdout_callback function
 ---@return Mana.Prefetcher
 local function mk_prefetcher(stdout_callback)
@@ -420,9 +422,9 @@ M.setup = function(opts)
 		for line in data:gmatch("[^\r\n]+") do
 			if line:match("^data: ") then
 				if line:match("data: %[DONE%]") then -- llm done talking
-			vim.schedule(function()
-				buffer_append("\n</assistant>\n", bufnr)
-			end)
+					vim.schedule(function()
+						buffer_append("\n</assistant>\n", bufnr)
+					end)
 				else
 					local json_str = line:sub(7)
 					local ok, decoded = pcall(vim.json.decode, json_str)
@@ -434,13 +436,13 @@ M.setup = function(opts)
 								end)
 							end
 						end
-		end
-	end
+					end
+				end
 			else
 				if data ~= ": OPENROUTER PROCESSING" then
-		vim.schedule(function()
+					vim.schedule(function()
 						buffer_append(data, bufnr) -- may contain error msgs
-		end)
+					end)
 				end
 			end
 		end
