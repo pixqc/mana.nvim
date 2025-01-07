@@ -375,28 +375,34 @@ end
 
 ---@param raw any
 ---@return Mana.EndpointConfigs|nil, string?
-local function parse_opts_endpoints(raw)
+local function parse_opts_envs(raw)
 	if type(raw) ~= "table" then
-		return nil, "endpoints must be a table"
+		return nil, "envs must be a table"
 	end
 
+	local urls = {
+		aistudio = "https://generativelanguage.googleapis.com/v1beta/chat/completions",
+		openrouter = "https://openrouter.ai/api/v1/chat/completions",
+	}
+
 	local parsed = {}
-	for endpoint, config in pairs(raw) do
-		if type(config.url) ~= "string" then
-			return nil, string.format("endpoint %s: url must be a string", endpoint)
+	for endpoint, env in pairs(raw) do
+		if not urls[endpoint] then
+			return nil, string.format("endpoint %s: invalid endpoint", endpoint)
 		end
-		if type(config.env) ~= "string" then
+
+		if type(env) ~= "string" then
 			return nil, string.format("endpoint %s: env must be a string", endpoint)
 		end
 
-		local api_key = os.getenv(config.env)
+		local api_key = os.getenv(env)
 		if not api_key then
 			local tmp = "endpoint %s: API key not found in environment variable %s"
-			return nil, string.format(tmp, endpoint, config.env)
+			return nil, string.format(tmp, endpoint, env)
 		end
 
 		parsed[endpoint] = {
-			url = config.url,
+			url = urls[endpoint],
 			api_key = api_key,
 		}
 	end
@@ -430,7 +436,7 @@ M.setup = function(opts)
 	local prefetcher = mk_prefetcher(stdout_callback)
 
 	---@type Mana.EndpointConfigs|nil, string?
-	local endpoint_cfgs, e_err = parse_opts_endpoints(opts.endpoints)
+	local endpoint_cfgs, e_err = parse_opts_envs(opts.envs)
 	if not endpoint_cfgs then
 		vim.notify("Mana.nvim error: " .. e_err, vim.log.levels.ERROR)
 		return
