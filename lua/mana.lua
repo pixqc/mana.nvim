@@ -65,13 +65,6 @@ local function buffer_get()
 	return bufnr -- create new buffer, return bufnr
 end
 
----@param bufnr integer
----@return nil
-local function buffer_clear(bufnr)
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
-	buffer_cursor_down(bufnr)
-end
-
 ---@param chunk string
 ---@param bufnr integer
 ---@return nil
@@ -302,7 +295,10 @@ local function command_set(model_switch_, winbar, winid, bufnr)
 				vim.api.nvim_set_option_value("winbar", winbar, { win = winid })
 			end
 		elseif cmd == "clear" then
-			buffer_clear(bufnr)
+			vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+			if winid and vim.api.nvim_win_is_valid(winid) and vim.api.nvim_get_current_win() == winid then
+				buffer_cursor_down(bufnr)
+			end
 		elseif cmd == "paste" then
 			local start = vim.fn.getpos("'<")[2]
 			local end_ = vim.fn.getpos("'>")[2]
