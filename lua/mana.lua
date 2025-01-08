@@ -123,6 +123,7 @@ local function window_create(bufnr)
 	vim.api.nvim_set_option_value("winfixwidth", true, { win = winid })
 	vim.api.nvim_set_option_value("wrap", true, { win = winid })
 	vim.api.nvim_set_option_value("linebreak", true, { win = winid })
+	vim.api.nvim_set_option_value("colorcolumn", "", { win = winid })
 
 	-- keep window size static
 	vim.api.nvim_create_autocmd("WinResized", {
