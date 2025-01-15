@@ -146,7 +146,7 @@ local function keymap_set_chat(model_cfg, bufnr)
 	vim.api.nvim_buf_set_keymap(bufnr, "n", "<CR>", "", {
 		callback = function()
 			local messages = buffer_parse(bufnr)
-			if #messages == 1 and messages[1].content == "" then
+			if #messages == 0 then
 				print("emtpy input")
 				return -- no user input, do nothing
 			end
