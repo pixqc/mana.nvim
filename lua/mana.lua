@@ -380,6 +380,7 @@ local function parse_opts_envs(raw)
 	local urls = {
 		aistudio = "https://generativelanguage.googleapis.com/v1beta/chat/completions",
 		openrouter = "https://openrouter.ai/api/v1/chat/completions",
+		groq = "https://api.groq.com/openai/v1/chat/completions",
 	}
 
 	local parsed = {}
